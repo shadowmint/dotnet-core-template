@@ -45,6 +45,8 @@ Note that nuget will prefer your global package cache to the actual version in y
 
 You may want to use `dotnet nuget locals all --clear` to clear cached objects.
 
+Requires npm >= 5.4 to install correctly.
+
 # Building a new package version
 
     npm run build
