@@ -1,0 +1,22 @@
+{
+  "name": "TEMPLATE",
+  "version": "0.0.1",
+  "description": "...",
+  "main": "index.js",
+  "files": [
+    "lib",
+    "scripts"
+  ],
+  "scripts": {
+    "test": "dotnet build && dotnet test",
+    "build": "dotnet clean && dotnet build && dotnet pack --include-symbols --include-source && rm -f lib/*.nupkg && find TEMPLATE/* -name *.nupkg | xargs -I files cp files lib",
+    "demo": "cd TEMPLATE.Demo && dotnet run",
+    "postinstall": "node scripts/postinstall.js"
+  },
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "mkdirp": "^0.5.1",
+    "ncp": "^2.0.0"
+  }
+}
