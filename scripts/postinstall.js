@@ -1,29 +1,26 @@
-var mkdirp = require('mkdirp');
-var path = require('path');
-var fs = require('fs');
-var ncp = require('ncp');
+let path = require('path');
+let fs = require('fs');
+let copy = require('./copy');
+
+// Exit vars
+let done = false;
 
 // Paths
-var root = process.env.INIT_CWD;
-var src = path.join(__dirname, '..', 'lib');
-var pkg = path.join(root, '_packages');
-var ismodule = fs.existsSync(path.join(root, 'node_modules'));
-if (!root) throw new Error('Requires npm 5.4+');
+let root = process.env.INIT_CWD || path.join(__dirname, '..', '..', '..');
+let src = path.join(__dirname, '..', 'lib');
+let pkg = path.join(root, '_packages');
+let ismodule = fs.existsSync(path.join(root, 'node_modules'));
 
 // Create folder if missing
 if (ismodule) {
-  mkdirp(pkg, function (err) {
-    if (err) {
-      console.error(err)
-      process.exit(1);
-    }
-
-    // Copy files
-    ncp(src, pkg, function (err) {
-      if (err) {
-        console.error(err);
-        process.exit(1);
-      }
-    });
+  copy.copy(src, pkg).then(() => {
+    done = true;
+  }, (err) => {
+    console.error(err)
+    process.exit(1);
   });
 }
+
+(function wait () {
+   if (!done) setTimeout(wait, 100);
+})();
