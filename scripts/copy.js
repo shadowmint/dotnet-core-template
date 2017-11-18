@@ -8,7 +8,6 @@ function copy(src, dest) {
   return new Promise((resolve, reject) => {
     walkFind(src).then((list) => {
       mkdir(dest).then(() => {
-        console.log(list);
         walkCopy(src, dest, list).then(resolve, reject);
       }, reject);
     }, reject);
@@ -17,60 +16,80 @@ function copy(src, dest) {
 
 function walkFind(src) {
   trace('explore: ' + src);
-  let data = {pending: ['.'], busy: 0, dirs: [], files: [], error: null};
+  let data = {pending: [src], busy: 0, dirs: [], files: [], error: null};
   return new Promise((resolve, reject) => {
     let step = () => {
       if (data.error) {
         reject(data.error);
       }
       else if (data.busy || data.pending.length) {
-        walkFindFSM(src, '', data, step);
+        walkFindFSM(src, data, step);
       }
       else {
         resolve(data);
       }
     };
-    walkFindFSM(src, src, data, step);
+    walkFindFSM(src, data, step);
   });
 }
 
-function walkFindFSM(root, part, data, step) {
+function walkFindFSM(root, data, step) {
+  let doStep = () => setTimeout(step, 1);
   let aborted = false;
-  let dir = path.join(part, data.pending.shift());
+
+  // Busy waiting
+  if (!data.pending.length) {
+    setTimeout(doStep, 1000);
+    return;
+  }
+
+  let dir = data.pending.shift();
+  let dirShort = dir.substr(root.length + 1);
   data.busy += 1;
-  trace("- Folder: " + dir);
+  trace("- Folder: " + dirShort);
   fs.readdir(dir, (err, list) => {
     if (aborted) return;
     if (err) {
       data.error = err;
       aborted = true;
+      doStep();
       return;
     }
+
+    // No files, skip
+    if (list.length === 0) {
+      data.busy -= 1;
+      doStep();
+      return;
+    }
+
+    // Check each file and process it
     let resolved = 0;
     for (let i = 0; i < list.length; i++) {
       let here = path.join(dir, list[i]);
-      trace("-- File: " + here);
+      let hereShort = here.substr(root.length + 1);
+      trace("-- File: " + hereShort);
       fs.stat(here, (err, stat) => {
         if (aborted) return;
         if (err) {
           aborted = true;
           data.error = err;
+          doStep();
           return;
         }
         if (stat.isDirectory()) {
           data.pending.push(here);
         }
         else {
-          let shortname = here.substr(root.length + 1, here.length);
-          data.files.push(shortname);
+          data.files.push(hereShort);
         }
         resolved += 1;
-        if (resolved == list.length) {
+        if (resolved === list.length) {
           data.busy -= 1;
           let shortname = dir.substr(root.length + 1, dir.length);
           data.dirs.push(shortname);
-          trace("- Finished: " + here);
-          step();
+          trace("- Finished: " + hereShort);
+          doStep();
         }
       });
     }
@@ -91,9 +110,10 @@ function walkCopy(root, dest, data) {
       if (error) {
         reject(error);
       }
-      if (folderCount == folders.length) {
-        console.log("Done with folders");
-        files.map(i => copyFile(i).then(() => finishedCopy(i), (err) => { error = err; }));
+      if (folderCount === folders.length) {
+        files.map(i => copyFile(i).then(() => finishedCopy(i), (err) => {
+          error = err;
+        }));
       }
     };
     let finishedCopy = (path) => {
@@ -102,12 +122,13 @@ function walkCopy(root, dest, data) {
       if (error) {
         reject(error);
       }
-      if (fileCount == files.length) {
-        console.log("Done with files");
+      if (fileCount === files.length) {
         resolve({folders: folders, files: files.map(i => i[1])});
       }
     };
-    folders.map(i => mkdir(i).then(() => continueWithCopy(i), (err) => { error = err; }));
+    folders.map(i => mkdir(i).then(() => continueWithCopy(i), (err) => {
+      error = err;
+    }));
   });
 }
 
@@ -115,33 +136,66 @@ function copyFile(paths) {
   const src = paths[0];
   const dest = paths[1];
   return new Promise((resolve, reject) => {
-    console.log("cp " + src + " " + dest);
-    fs.copyFile(src, dest, (err) => {
-      console.log("cp " + src + " " + dest + " ", err);
-      if (err) reject(err);
-      resolve();
-    });
-  }).catch((err) => {
-    reject(err);
+    try {
+      let copyResult = (err) => {
+        if (err) reject(err);
+        resolve();
+      };
+      if (fs.copyFile) {
+        fs.copyFile(src, dest, copyResult);
+      }
+      else {
+        copyFileFallback(src, dest, copyResult);
+      }
+    }
+    catch (err) {
+      reject(err);
+    }
   });
+}
+
+function copyFileFallback(source, target, cb) {
+  let cbCalled = false;
+  let rd = fs.createReadStream(source);
+  rd.on("error", function (err) {
+    done(err);
+  });
+  let wr = fs.createWriteStream(target);
+  wr.on("error", function (err) {
+    done(err);
+  });
+  wr.on("close", function (ex) {
+    done();
+  });
+  rd.pipe(wr);
+
+  function done(err) {
+    if (!cbCalled) {
+      cb(err);
+      cbCalled = true;
+    }
+  }
 }
 
 function mkdir(target) {
   return new Promise((resolve, reject) => {
-    try {
-      let parts = target.split(path.sep);
-      let partial = path.isAbsolute(target) ? '/' : process.cwd();
-      for (let i = 0; i < parts.length; i++) {
-        partial = path.join(partial, parts[i]);
-        if (!fs.existsSync(partial)) {
-          fs.mkdirSync(partial);
+    setTimeout(() => {
+      try {
+        let parts = target.split(path.sep);
+        parts[0] = '/';  // Split and recombine on absolute paths doesn't work.
+        let partial = '';
+        for (let i = 0; i < parts.length; i++) {
+          partial = path.resolve(path.join(partial, parts[i]));
+          if (!fs.existsSync(partial)) {
+            fs.mkdirSync(partial);
+          }
         }
+        resolve();
       }
-      resolve();
-    }
-    catch(err) {
-      reject(err);
-    }
+      catch (err) {
+        reject(err);
+      }
+    }, 1);
   });
 }
 
